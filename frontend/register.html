@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Register</title>
+</head>
+<body>
+  <h1>Registering...</h1>
+  <script>
+    function base64urlToBuffer(b64url) {
+      if (!b64url) throw new Error("Missing base64url input");
+      const pad = '='.repeat((4 - b64url.length % 4) % 4);
+      const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/') + pad;
+      const binary = atob(b64);
+      return Uint8Array.from(binary, c => c.charCodeAt(0));
+    }
+
+    async function register() {
+      const params = new URLSearchParams(window.location.search);
+      const user = params.get("user");
+      const invite = params.get("invite");
+
+      if (!user || !invite) {
+        document.body.innerHTML = '<p>Missing user or invite token</p>';
+        return;
+      }
+
+      const startRes = await fetch(`/register/start?user=${user}&invite=${invite}`);
+      const options = await startRes.json();
+      console.log("Register options:", options);
+
+      options.challenge = base64urlToBuffer(options.challenge);
+      options.user.id = base64urlToBuffer(options.user.id);
+
+      if (options.excludeCredentials) {
+        options.excludeCredentials = options.excludeCredentials.map(cred => ({
+          ...cred,
+          id: base64urlToBuffer(cred.id),
+        }));
+      }
+
+      const cred = await navigator.credentials.create({ publicKey: options });
+
+      const credential = {
+        id: cred.id,
+        rawId: btoa(String.fromCharCode(...new Uint8Array(cred.rawId))),
+        type: cred.type,
+        response: {
+          attestationObject: btoa(String.fromCharCode(...new Uint8Array(cred.response.attestationObject))),
+          clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(cred.response.clientDataJSON)))
+        }
+      };
+
+      const finishRes = await fetch(`/register/finish?user=${user}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credential)
+      });
+
+      const result = await finishRes.json();
+      document.body.innerHTML = `<p>${result.message}</p>`;
+    }
+
+    register().catch(err => {
+      document.body.innerHTML = `<pre>${err}</pre>`;
+    });
+  </script>
+</body>
+</html>
