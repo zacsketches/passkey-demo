@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -89,16 +90,22 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+func writeJSONError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
 func handleRegisterStart(w http.ResponseWriter, r *http.Request) {
 	invite := r.URL.Query().Get("invite")
 	if invite != "secret-token" {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
 	name := r.URL.Query().Get("user")
 	if name == "" {
-		http.Error(w, "Missing user", http.StatusBadRequest)
+		writeJSONError(w, "Missing user", http.StatusBadRequest)
 		return
 	}
 
@@ -106,24 +113,25 @@ func handleRegisterStart(w http.ResponseWriter, r *http.Request) {
 	row := db.QueryRow(`SELECT id, name, display_name FROM users WHERE name = ?`, name)
 	err := row.Scan(&user.ID, &user.Name, &user.DisplayName)
 	if err == sql.ErrNoRows {
+		userID := uuid.New().String()
 		user = User{
-			ID:          []byte(name),
+			ID:          []byte(userID),
 			Name:        name,
 			DisplayName: name,
 		}
 		_, err := db.Exec(`INSERT INTO users (id, name, display_name) VALUES (?, ?, ?)`, user.ID, user.Name, user.DisplayName)
 		if err != nil {
-			http.Error(w, "Database error", http.StatusInternalServerError)
+			writeJSONError(w, "Database error", http.StatusInternalServerError)
 			return
 		}
 	} else if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		writeJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
 	opts, sessionData, err := webAuthn.BeginRegistration(&user)
 	if err != nil {
-		http.Error(w, "Registration start error", http.StatusInternalServerError)
+		writeJSONError(w, "Registration start error", http.StatusInternalServerError)
 		return
 	}
 
@@ -131,7 +139,8 @@ func handleRegisterStart(w http.ResponseWriter, r *http.Request) {
 	sessionStore.registration[name] = sessionData
 	sessionStore.mu.Unlock()
 
-	json.NewEncoder(w).Encode(opts)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"publicKey": opts})
 }
 
 func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +149,7 @@ func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	row := db.QueryRow(`SELECT id, name, display_name FROM users WHERE name = ?`, name)
 	err := row.Scan(&user.ID, &user.Name, &user.DisplayName)
 	if err != nil {
-		http.Error(w, "User not found", http.StatusBadRequest)
+		writeJSONError(w, "User not found", http.StatusBadRequest)
 		return
 	}
 
@@ -148,24 +157,24 @@ func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	sessionData, ok := sessionStore.registration[name]
 	sessionStore.mu.RUnlock()
 	if !ok {
-		http.Error(w, "Session not found", http.StatusBadRequest)
+		writeJSONError(w, "Session not found", http.StatusBadRequest)
 		return
 	}
 
 	cred, err := webAuthn.FinishRegistration(&user, *sessionData, r)
 	if err != nil {
-		http.Error(w, "Registration finish error", http.StatusBadRequest)
+		writeJSONError(w, fmt.Sprintf("Registration finish error: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(cred); err != nil {
-		http.Error(w, "Failed to encode credential", http.StatusInternalServerError)
+		writeJSONError(w, "Failed to encode credential", http.StatusInternalServerError)
 		return
 	}
 	_, err = db.Exec(`INSERT INTO credentials (id, user_id, credential_data) VALUES (?, ?, ?)`, cred.ID, user.ID, buf.Bytes())
 	if err != nil {
-		http.Error(w, "Failed to store credential", http.StatusInternalServerError)
+		writeJSONError(w, "Failed to store credential", http.StatusInternalServerError)
 		return
 	}
 
