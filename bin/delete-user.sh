@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Set the path to your SQLite database
-DB_PATH="./db/users.db"
+# Set the DB_PATH dynamically, one directory up from the script's location
+SCRIPT_DIR=$(dirname "$0")
+DB_PATH="$SCRIPT_DIR/../db/users.db"
 
 # Prompt for the username to delete
 echo "Enter the username to delete:"
