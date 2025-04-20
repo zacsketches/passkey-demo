@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Login</title>
+</head>
+<body>
+  <h1>Welcome to the Passkey Demo</h1>
+  <div>
+    <label for="username">Username:</label>
+    <input type="text" id="username" name="username" />
+    <button onclick="startLogin()">Login</button>
+  </div>
+  <div id="result" style="display:none; color: green; font-weight: bold;"></div>
+
+  <script>
+    function base64urlToBuffer(b64url) {
+      const pad = '='.repeat((4 - b64url.length % 4) % 4);
+      const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/') + pad;
+      const binary = atob(b64);
+      return Uint8Array.from(binary, c => c.charCodeAt(0));
+    }
+
+    function bufferToBase64URL(buffer) {
+      return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    async function startLogin() {
+      const user = document.getElementById("username").value;
+      if (!user) {
+        document.getElementById("result").innerText = "Please enter a username.";
+        return;
+      }
+
+      const startRes = await fetch(`/login/start?user=${user}`);
+      const wrapper = await startRes.json();
+      const publicKey = wrapper.publicKey.publicKey;
+
+      console.log("Login publicKey options:", publicKey);
+
+      publicKey.challenge = base64urlToBuffer(publicKey.challenge);
+      publicKey.allowCredentials = publicKey.allowCredentials.map(cred => ({
+        ...cred,
+        id: base64urlToBuffer(cred.id),
+      }));
+
+      const assertion = await navigator.credentials.get({ publicKey });
+
+      const credential = {
+        id: assertion.id,
+        rawId: bufferToBase64URL(assertion.rawId),
+        type: assertion.type,
+        response: {
+          authenticatorData: bufferToBase64URL(assertion.response.authenticatorData),
+          clientDataJSON: bufferToBase64URL(assertion.response.clientDataJSON),
+          signature: bufferToBase64URL(assertion.response.signature),
+          userHandle: assertion.response.userHandle ? bufferToBase64URL(assertion.response.userHandle) : null
+        }
+      };
+
+      const finishRes = await fetch(`/login/finish?user=${user}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credential)
+      });
+
+      const resultText = await finishRes.text();
+      try {
+        const result = JSON.parse(resultText);
+        const resultEl = document.getElementById("result");
+        resultEl.innerText = result.message || result.error;
+        resultEl.style.display = "block";
+      } catch {
+        const resultEl = document.getElementById("result");
+        resultEl.innerText = resultText;
+        resultEl.style.display = "block";
+      }
+    }
+  </script>
+</body>
+</html>

@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS credentials (
 	user_id TEXT NOT NULL,
 	credential_data BLOB NOT NULL,
 	FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS logins (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id TEXT NOT NULL,
+	success INTEGER NOT NULL,
+	remote_ip TEXT,
+	ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY(user_id) REFERENCES users(id)
 );`
 
 	_, err = db.Exec(schema)
@@ -84,6 +93,8 @@ func main() {
 
 	http.HandleFunc("/register/start", handleRegisterStart)
 	http.HandleFunc("/register/finish", handleRegisterFinish)
+	http.HandleFunc("/login/start", handleLoginStart)
+	http.HandleFunc("/login/finish", handleLoginFinish)
 	http.Handle("/", http.FileServer(http.Dir("frontend")))
 
 	fmt.Println("Listening on http://localhost:8080")
@@ -181,4 +192,98 @@ func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	user.AddCredential(*cred)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Registration complete. You can now log in."})
+}
+
+func handleLoginStart(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("user")
+	if name == "" {
+		writeJSONError(w, "Missing user", http.StatusBadRequest)
+		return
+	}
+
+	var user User
+	row := db.QueryRow(`SELECT id, name, display_name FROM users WHERE name = ?`, name)
+	err := row.Scan(&user.ID, &user.Name, &user.DisplayName)
+	if err != nil {
+		writeJSONError(w, "User not found", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := db.Query(`SELECT credential_data FROM credentials WHERE user_id = ?`, user.ID)
+	if err != nil {
+		writeJSONError(w, "Credential lookup error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var blob []byte
+		if err := rows.Scan(&blob); err == nil {
+			var cred webauthn.Credential
+			if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&cred); err == nil {
+				user.AddCredential(cred)
+			}
+		}
+	}
+
+	opts, sessionData, err := webAuthn.BeginLogin(&user)
+	if err != nil {
+		writeJSONError(w, "Login start error", http.StatusInternalServerError)
+		return
+	}
+
+	sessionStore.mu.Lock()
+	if sessionStore.registration == nil {
+		sessionStore.registration = make(map[string]*webauthn.SessionData)
+	}
+	sessionStore.registration["login:"+name] = sessionData
+	sessionStore.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"publicKey": opts})
+}
+
+func handleLoginFinish(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("user")
+	var user User
+	row := db.QueryRow(`SELECT id, name, display_name FROM users WHERE name = ?`, name)
+	err := row.Scan(&user.ID, &user.Name, &user.DisplayName)
+	if err != nil {
+		writeJSONError(w, "User not found", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := db.Query(`SELECT credential_data FROM credentials WHERE user_id = ?`, user.ID)
+	if err != nil {
+		writeJSONError(w, "Credential loading error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var blob []byte
+		if err := rows.Scan(&blob); err == nil {
+			var cred webauthn.Credential
+			if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&cred); err == nil {
+				user.AddCredential(cred)
+			}
+		}
+	}
+
+	sessionStore.mu.RLock()
+	sessionData, ok := sessionStore.registration["login:"+name]
+	sessionStore.mu.RUnlock()
+	if !ok {
+		writeJSONError(w, "Login session not found", http.StatusBadRequest)
+		return
+	}
+
+	_, err = webAuthn.FinishLogin(&user, *sessionData, r)
+	if err != nil {
+		_, _ = db.Exec(`INSERT INTO logins (user_id, success, remote_ip) VALUES (?, 0, ?)`, user.ID, r.RemoteAddr)
+		writeJSONError(w, fmt.Sprintf("Login finish error: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = db.Exec(`INSERT INTO logins (user_id, success, remote_ip) VALUES (?, 1, ?)`, user.ID, r.RemoteAddr)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Authentication successful."})
 }
