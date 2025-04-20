@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/gob"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -38,9 +39,18 @@ var (
 		registration map[string]*webauthn.SessionData
 		mu           sync.RWMutex
 	}{registration: make(map[string]*webauthn.SessionData)}
+
+	// Flag to control whether registration endpoints are enabled
+	registrationOn bool
 )
 
 func init() {
+	// Define the flag for enabling/disabling registration endpoints.
+	// If the flag is passed, `registrationOn` will be set to true.
+	// If it's not passed, it defaults to false.
+	flag.BoolVar(&registrationOn, "registration-on", false, "Enable user registration endpoints")
+	flag.Parse()
+
 	dbPath := filepath.Join(".", "db", "users.db")
 	os.MkdirAll(filepath.Dir(dbPath), os.ModePerm)
 
@@ -80,6 +90,13 @@ CREATE TABLE IF NOT EXISTS logins (
 }
 
 func main() {
+	// Log whether registration endpoints are enabled or not
+	if registrationOn {
+		log.Println("Registration endpoints are enabled.")
+	} else {
+		log.Println("Registration endpoints will serve 404 errors.")
+	}
+
 	var err error
 	webAuthn, err = webauthn.New(&webauthn.Config{
 		RPDisplayName: "My App",
@@ -91,13 +108,24 @@ func main() {
 	}
 	defer db.Close()
 
-	http.HandleFunc("/register/start", handleRegisterStart)
-	http.HandleFunc("/register/finish", handleRegisterFinish)
+	// Conditionally serve the registration routes based on the flag
+	if registrationOn {
+		http.HandleFunc("/register/start", handleRegisterStart)
+		http.HandleFunc("/register/finish", handleRegisterFinish)
+	} else {
+		// Serve a clean 404 response if registration routes are disabled
+		http.HandleFunc("/register/start", handle404)
+		http.HandleFunc("/register/finish", handle404)
+	}
+
+	// Serve other routes
+	// New handler to check if registration is enabled
+	http.HandleFunc("/check-registration", handleCheckRegistration)
 	http.HandleFunc("/login/start", handleLoginStart)
 	http.HandleFunc("/login/finish", handleLoginFinish)
 	http.Handle("/", http.FileServer(http.Dir("frontend")))
 
-	fmt.Println("Listening on http://localhost:8080")
+	log.Println("Listening on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
@@ -105,6 +133,25 @@ func writeJSONError(w http.ResponseWriter, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// Handle 404 for disabled registration routes
+func handle404(w http.ResponseWriter, r *http.Request) {
+	log.Println("Handling 404 when routes are disabled")
+	w.WriteHeader(http.StatusNotFound)
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte("<h1>404 Not Found</h1><p>The requested route is not available.</p>"))
+}
+
+// Handler to check if registration is enabled
+func handleCheckRegistration(w http.ResponseWriter, r *http.Request) {
+	if registrationOn {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"registrationEnabled": true})
+	} else {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"registrationEnabled": false})
+	}
 }
 
 func handleRegisterStart(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,20 @@
 <body>
   <h1>Registering...</h1>
   <script>
+    // Check if registration is enabled when the page loads
+  fetch('/check-registration')
+    .then(response => response.json())
+    .then(data => {
+      if (!data.registrationEnabled) {
+        // If registration is disabled, redirect to another page (e.g., login page)
+        window.location.href = '/login.html';  // Or display a message if you prefer
+      }
+    })
+    .catch(error => {
+      console.error('Error checking registration status:', error);
+    });
+
+
     function base64urlToBuffer(b64url) {
       if (!b64url) throw new Error("Missing base64url input");
       const pad = '='.repeat((4 - b64url.length % 4) % 4);
