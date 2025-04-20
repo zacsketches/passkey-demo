@@ -2,125 +2,138 @@
 <html>
 <head>
     <title>Login</title>
-  <style>
-    #feedback {
-      display: none;
-      color: red;
-    }
-    #content {
-      display: none;
-      margin-top: 20px;
-    }
-  </style>
+    <style>
+        #feedback {
+            display: none;
+            color: red;
+        }
+        #content {
+            display: none;
+            margin-top: 20px;
+        }
+    </style>
 </head>
 <body>
-  <h1>Passkey Demo</h1>
-  <!-- Login Form -->
-  <div id="login">
-    <label for="username">Username:</label>
-    <input type="text" id="username" name="username" required />
-    <button onclick="startLogin()">Login</button>
-  </div>
+    <h1>Passkey Demo</h1>
+    <!-- Login Form -->
+    <div id="login">
+        <label for="username">Username:</label>
+        <input type="text" id="username" name="username" required />
+        <button onclick="startLogin()">Login</button>
+    </div>
 
-  <!-- Feedback Message -->
-  <div id="feedback"></div>
+    <!-- Feedback Message -->
+    <div id="feedback"></div>
 
-  <!-- Content (hidden initially) -->
-  <div id="content">
-    <form onsubmit="handleForm(event)">
-      <label for="height">Height:</label>
-      <input type="number" id="height" name="height" required>
-      <label for="width">Width:</label>
-      <input type="number" id="width" name="width" required>
-      <button type="submit">Submit</button>
-    </form>
-  </div>
+    <!-- Content (hidden initially) -->
+    <div id="content">
+        <form onsubmit="handleForm(event)">
+            <label for="height">Height:</label>
+            <input type="number" id="height" name="height" required>
+            <label for="width">Width:</label>
+            <input type="number" id="width" name="width" required>
+            <button type="submit">Submit</button>
+        </form>
+    </div>
 
-  <script>
-    function base64urlToBuffer(b64url) {
-      const pad = '='.repeat((4 - b64url.length % 4) % 4);
-      const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/') + pad;
-      const binary = atob(b64);
-      return Uint8Array.from(binary, c => c.charCodeAt(0));
-    }
-
-    function bufferToBase64URL(buffer) {
-      return btoa(String.fromCharCode(...new Uint8Array(buffer)))
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    }
-
-    async function startLogin() {
-      const user = document.getElementById("username").value;
-      if (!user) {
-        const input = document.getElementById("username");
-        input.focus();
-        input.reportValidity();
-        return;
-      }
-
-      const startRes = await fetch(`/login/start?user=${user}`);
-      if (!startRes.ok) {
-        const resultEl = document.getElementById("content");
-        resultEl.innerHTML = `<p>User not recognized.</p>`;
-        resultEl.style.display = "block";
-        console.log("Showing content div for unrecognized user");
-        return;
-     
-      }
-      const wrapper = await startRes.json();
-      const publicKey = wrapper.publicKey.publicKey;
-
-      console.log("Login publicKey options:", publicKey);
-
-      publicKey.challenge = base64urlToBuffer(publicKey.challenge);
-      publicKey.allowCredentials = publicKey.allowCredentials.map(cred => ({
-        ...cred,
-        id: base64urlToBuffer(cred.id),
-      }));
-
-      const assertion = await navigator.credentials.get({ publicKey });
-
-      const credential = {
-        id: assertion.id,
-        rawId: bufferToBase64URL(assertion.rawId),
-        type: assertion.type,
-        response: {
-          authenticatorData: bufferToBase64URL(assertion.response.authenticatorData),
-          clientDataJSON: bufferToBase64URL(assertion.response.clientDataJSON),
-          signature: bufferToBase64URL(assertion.response.signature),
-          userHandle: assertion.response.userHandle ? bufferToBase64URL(assertion.response.userHandle) : null
+    <script>
+        function base64urlToBuffer(b64url) {
+            const pad = '='.repeat((4 - b64url.length % 4) % 4);
+            const b64 = b64url.replace(/-/g, '+').replace(/_/g, '/') + pad;
+            const binary = atob(b64);
+            return Uint8Array.from(binary, c => c.charCodeAt(0));
         }
-      };
 
-      const finishRes = await fetch(`/login/finish?user=${user}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credential)
-      });
-
-      const resultText = await finishRes.text();
-      try {
-        const result = JSON.parse(resultText);
-        console.log("Login result:", result.message);
-        if ((result.message || '').toLowerCase().includes("successful")) {
-          const headerEl = document.getElementById("header");
-          headerEl.innerHTML = `<h2>Welcome ${user}</h2>`;
-          document.getElementById("content").style.display = "block";
-          console.log("Replaced header content with welcome message.");
+        function bufferToBase64URL(buffer) {
+            return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
         }
-        
-      } catch {
-        const resultEl = document.getElementById("content");
-        
-        resultEl.style.display = "block";
-      }
+
+        async function startLogin() {
+            // Hide the content div as the first action in the login process
+            document.getElementById("content").style.display = "none";
+  
+            const user = document.getElementById("username").value;
+  if (!user) {
+    const input = document.getElementById("username");
+    input.focus();
+    return;
+  }
+
+  const startRes = await fetch(`/login/start?user=${user}`);
+  if (!startRes.ok) {
+    const feedbackEl = document.getElementById("feedback");
+    feedbackEl.textContent = "User not recognized. Please try again.";
+    feedbackEl.style.display = "block"; // Show feedback section
+    console.log("User not recognized.");
+    return;
+  }
+
+  const wrapper = await startRes.json();
+  const publicKey = wrapper.publicKey.publicKey;
+
+  console.log("Login publicKey options:", publicKey);
+
+  publicKey.challenge = base64urlToBuffer(publicKey.challenge);
+  publicKey.allowCredentials = publicKey.allowCredentials.map(cred => ({
+      ...cred,
+      id: base64urlToBuffer(cred.id),
+  }));
+
+  const assertion = await navigator.credentials.get({ publicKey });
+
+  const credential = {
+    id: assertion.id,
+    rawId: bufferToBase64URL(assertion.rawId),
+    type: assertion.type,
+    response: {
+      authenticatorData: bufferToBase64URL(assertion.response.authenticatorData),
+      clientDataJSON: bufferToBase64URL(assertion.response.clientDataJSON),
+      signature: bufferToBase64URL(assertion.response.signature),
+      userHandle: assertion.response.userHandle ? bufferToBase64URL(assertion.response.userHandle) : null
     }
-  function handleForm(event) {
-      event.preventDefault();
-      const height = document.getElementById("height").value;
-      const width = document.getElementById("width").value;
-      alert(`Submitted dimensions: Height = ${height}, Width = ${width}`);
+  };
+
+  const finishRes = await fetch(`/login/finish?user=${user}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credential)
+  });
+
+  const resultText = await finishRes.text();
+  console.log("Login result:", resultText); // Add logging for the raw response
+
+  // Ensure feedbackEl is defined here
+  const feedbackEl = document.getElementById("feedback");
+
+  try {
+    const result = JSON.parse(resultText); // Attempt to parse the response
+    if ((result.message || '').toLowerCase().includes("successful")) {
+      document.getElementById("feedback").style.display = "block"; // Only show content after successful login
+      feedbackEl.innerHTML = `<h2>Welcome ${user}</h2>`; // This now updates after successful login
+      feedbackEl.style.color = "black"; // Override color to black
+      document.getElementById("login").style.display = "none"; // Hide the login box after successful login
+      document.getElementById("content").style.display = "block"; // Only show content after successful login
+      console.log("Replaced header content with welcome message.");
+    } else {
+      feedbackEl.textContent = "Login failed. Please try again.";
+      feedbackEl.style.display = "block"; // Show feedback section
+      console.log("Login failed.");
     }
-  </script>
+  } catch (error) {
+    feedbackEl.textContent = "Error during login process. Please try again.";
+    feedbackEl.style.display = "block"; // Show feedback section
+    console.error("Error parsing login result:", error); // Log the error for debugging
+  }
+}
+
+
+        function handleForm(event) {
+            event.preventDefault();
+            const height = document.getElementById("height").value;
+            const width = document.getElementById("width").value;
+            alert(`Submitted dimensions: Height = ${height}, Width = ${width}`);
+        }
+    </script>
 </body>
 </html>
