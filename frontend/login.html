@@ -4,7 +4,7 @@
   <title>Login</title>
 </head>
 <body>
-  <h1>Welcome to the Passkey Demo</h1>
+  <h1>Passkey Demo</h1>
   <div id="header" style="transition: opacity 0.3s ease;">
     <label for="username">Username:</label>
     <input type="text" id="username" name="username" title="Please enter your username" />
@@ -46,12 +46,10 @@
       if (!startRes.ok) {
         const resultEl = document.getElementById("content");
         resultEl.innerHTML = `<p>User not recognized.</p>`;
-                console.log("Showing content div");
-        if ((result.message || resultText).toLowerCase().includes("successful")) {
-          document.getElementById("header").innerText = `Welcome ${user}`;
-          
-        }
+        resultEl.style.display = "block";
+        console.log("Showing content div for unrecognized user");
         return;
+     
       }
       const wrapper = await startRes.json();
       const publicKey = wrapper.publicKey.publicKey;
@@ -94,10 +92,10 @@
           document.getElementById("content").style.display = "block";
           console.log("Replaced header content with welcome message.");
         }
-        resultEl.style.display = "block";
+        
       } catch {
         const resultEl = document.getElementById("content");
-        resultEl.innerHTML += `<p>${resultText}</p>`;
+        
         resultEl.style.display = "block";
       }
     }
